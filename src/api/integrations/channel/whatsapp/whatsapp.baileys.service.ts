@@ -373,8 +373,15 @@ export class BaileysStartupService extends ChannelStartupService {
       };
 
       if (this.phoneNumber) {
-        await delay(1000);
-        this.instance.qrcode.pairingCode = await this.client.requestPairingCode(this.phoneNumber);
+        // Only request a pairing code on the FIRST QR event.
+        // Each requestPairingCode() call generates a new code and invalidates the
+        // previous one, giving users only ~20s before the code expires. By requesting
+        // once and reusing across QR rotations, the code stays valid for the full
+        // connection attempt (QR_LIMIT * qrTimeout).
+        if (!this.instance.qrcode.pairingCode) {
+          await delay(1000);
+          this.instance.qrcode.pairingCode = await this.client.requestPairingCode(this.phoneNumber);
+        }
       } else {
         this.instance.qrcode.pairingCode = null;
       }
@@ -428,6 +435,8 @@ export class BaileysStartupService extends ChannelStartupService {
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406];
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
       if (shouldReconnect) {
+        // Clear stale pairing code so a fresh one is requested on reconnect
+        this.instance.qrcode.pairingCode = null;
         await this.connectToWhatsapp(this.phoneNumber);
       } else {
         this.sendDataWebhook(Events.STATUS_INSTANCE, {
