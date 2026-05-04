@@ -9,7 +9,7 @@ class Redis {
   private connected = false;
   private lastErrorLog = 0;
   private errorCount = 0;
-  private static readonly ERROR_LOG_INTERVAL_MS = 30_000;
+  private static readonly ERROR_LOG_INTERVAL_MS = 60_000;
 
   constructor() {
     this.conf = configService.get<CacheConf>('CACHE')?.REDIS;
