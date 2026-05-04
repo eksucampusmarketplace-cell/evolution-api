@@ -6,6 +6,21 @@ if [ "$DOCKER_ENV" != "true" ]; then
     export_env_vars
 fi
 
+# Map DATABASE_URL to DATABASE_CONNECTION_URI when not explicitly set.
+# PaaS platforms (Render, Railway, etc.) typically provide DATABASE_URL,
+# but Prisma schemas in this project read DATABASE_CONNECTION_URI.
+if [ -z "$DATABASE_CONNECTION_URI" ] && [ -n "$DATABASE_URL" ]; then
+    export DATABASE_CONNECTION_URI="$DATABASE_URL"
+fi
+
+# For psql_bouncer provider: map DATABASE_URL to DATABASE_BOUNCER_CONNECTION_URI
+# when not explicitly set, so the pgbouncer-aware schema can resolve it.
+if [ "$DATABASE_PROVIDER" == "psql_bouncer" ]; then
+    if [ -z "$DATABASE_BOUNCER_CONNECTION_URI" ] && [ -n "$DATABASE_URL" ]; then
+        export DATABASE_BOUNCER_CONNECTION_URI="$DATABASE_URL"
+    fi
+fi
+
 if [[ "$DATABASE_PROVIDER" == "postgresql" || "$DATABASE_PROVIDER" == "mysql" || "$DATABASE_PROVIDER" == "psql_bouncer" ]]; then
     export DATABASE_URL
     echo "Deploying migrations for $DATABASE_PROVIDER"
