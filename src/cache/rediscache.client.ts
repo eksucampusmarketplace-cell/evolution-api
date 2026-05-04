@@ -7,6 +7,9 @@ class Redis {
   private client: RedisClientType = null;
   private conf: CacheConfRedis;
   private connected = false;
+  private lastErrorLog = 0;
+  private errorCount = 0;
+  private static readonly ERROR_LOG_INTERVAL_MS = 60_000;
 
   constructor() {
     this.conf = configService.get<CacheConf>('CACHE')?.REDIS;
@@ -36,11 +39,19 @@ class Redis {
       this.client.on('ready', () => {
         this.logger.verbose('redis ready');
         this.connected = true;
+        this.errorCount = 0;
       });
 
       this.client.on('error', () => {
-        this.logger.error('redis disconnected');
         this.connected = false;
+        this.errorCount++;
+        const now = Date.now();
+        if (now - this.lastErrorLog >= Redis.ERROR_LOG_INTERVAL_MS) {
+          const suffix = this.errorCount > 1 ? ` (repeated ${this.errorCount} times)` : '';
+          this.logger.error(`redis disconnected${suffix}`);
+          this.lastErrorLog = now;
+          this.errorCount = 0;
+        }
       });
 
       this.client.on('end', () => {
