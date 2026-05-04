@@ -1,8 +1,11 @@
 import { InstanceDto } from '@api/dto/instance.dto';
 import { cache, prismaRepository, waMonitor } from '@api/server.module';
 import { CacheConf, configService } from '@config/env.config';
+import { Logger } from '@config/logger.config';
 import { BadRequestException, ForbiddenException, InternalServerErrorException, NotFoundException } from '@exceptions';
 import { NextFunction, Request, Response } from 'express';
+
+const logger = new Logger('InstanceGuard');
 
 async function getInstance(instanceName: string) {
   try {
@@ -19,6 +22,23 @@ async function getInstance(instanceName: string) {
     return exists || (await prismaRepository.instance.findMany({ where: { name: instanceName } })).length > 0;
   } catch (error) {
     throw new InternalServerErrorException(error?.toString());
+  }
+}
+
+async function isInstanceOnlyInDatabase(instanceName: string): Promise<boolean> {
+  const inMemory = !!waMonitor.waInstances[instanceName];
+  if (inMemory) return false;
+
+  const dbRecords = await prismaRepository.instance.findMany({ where: { name: instanceName } });
+  return dbRecords.length > 0;
+}
+
+async function removeStaleInstance(instanceName: string): Promise<void> {
+  try {
+    await waMonitor.cleaningStoreData(instanceName);
+    logger.warn(`Removed stale database record for instance "${instanceName}" (not loaded in memory)`);
+  } catch (error) {
+    logger.error(`Failed to remove stale instance "${instanceName}": ${error}`);
   }
 }
 
@@ -43,7 +63,14 @@ export async function instanceLoggedGuard(req: Request, _: Response, next: NextF
   if (req.originalUrl.includes('/instance/create')) {
     const instance = req.body as InstanceDto;
     if (await getInstance(instance.instanceName)) {
-      throw new ForbiddenException(`This name "${instance.instanceName}" is already in use.`);
+      if (await isInstanceOnlyInDatabase(instance.instanceName)) {
+        logger.warn(
+          `Instance "${instance.instanceName}" exists in database but not in memory (stale after restart). Cleaning up for re-creation.`,
+        );
+        await removeStaleInstance(instance.instanceName);
+      } else {
+        throw new ForbiddenException(`This name "${instance.instanceName}" is already in use.`);
+      }
     }
 
     if (waMonitor.waInstances[instance.instanceName]) {

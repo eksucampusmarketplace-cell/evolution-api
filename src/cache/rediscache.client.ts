@@ -13,6 +13,15 @@ class Redis {
   }
 
   getConnection(): RedisClientType {
+    if (!this.conf?.ENABLED) {
+      return null;
+    }
+
+    if (!this.conf?.URI) {
+      this.logger.warn('CACHE_REDIS_ENABLED is true but CACHE_REDIS_URI is empty — skipping Redis connection');
+      return null;
+    }
+
     if (this.connected) {
       return this.client;
     } else {
