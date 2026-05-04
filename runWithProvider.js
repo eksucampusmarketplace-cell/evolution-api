@@ -2,6 +2,22 @@ const dotenv = require('dotenv');
 const { execSync } = require('child_process');
 const { existsSync } = require('fs');
 
+// Fallback: map DATABASE_URL to DATABASE_CONNECTION_URI when not explicitly set.
+// PaaS platforms (Render, Railway, etc.) typically provide DATABASE_URL,
+// but Prisma schemas in this project read DATABASE_CONNECTION_URI.
+// This must run BEFORE dotenv.config() so that dotenv does not override with
+// the default .env value (which points to the Docker-internal hostname).
+if (!process.env.DATABASE_CONNECTION_URI && process.env.DATABASE_URL) {
+  process.env.DATABASE_CONNECTION_URI = process.env.DATABASE_URL;
+}
+
+// For psql_bouncer: map DATABASE_URL to DATABASE_BOUNCER_CONNECTION_URI when not set.
+if (process.env.DATABASE_PROVIDER === 'psql_bouncer') {
+  if (!process.env.DATABASE_BOUNCER_CONNECTION_URI && process.env.DATABASE_URL) {
+    process.env.DATABASE_BOUNCER_CONNECTION_URI = process.env.DATABASE_URL;
+  }
+}
+
 dotenv.config();
 
 const { DATABASE_PROVIDER } = process.env;
