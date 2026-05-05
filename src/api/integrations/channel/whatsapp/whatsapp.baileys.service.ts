@@ -2710,15 +2710,21 @@ export class BaileysStartupService extends ChannelStartupService {
       };
     }
     if (status.type === 'image') {
+      const imageContent = isURL(status.content)
+        ? { url: status.content }
+        : Buffer.from(status.content, 'base64');
       return {
-        content: { image: { url: status.content }, caption: status.caption },
+        content: { image: imageContent, caption: status.caption },
         option: { statusJidList: status.statusJidList },
       };
     }
 
     if (status.type === 'video') {
+      const videoContent = isURL(status.content)
+        ? { url: status.content }
+        : Buffer.from(status.content, 'base64');
       return {
-        content: { video: { url: status.content }, caption: status.caption },
+        content: { video: videoContent, caption: status.caption },
         option: { statusJidList: status.statusJidList },
       };
     }
