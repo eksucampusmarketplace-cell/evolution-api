@@ -590,9 +590,9 @@ export class BaileysStartupService extends ChannelStartupService {
     let browserOptions = {};
 
     if (number || this.phoneNumber) {
-      this.phoneNumber = number;
+      this.phoneNumber = number || this.phoneNumber;
 
-      this.logger.info(`Phone number: ${number}`);
+      this.logger.info(`Phone number: ${this.phoneNumber}`);
     } else {
       const browser: WABrowserDescription = [session.CLIENT, session.NAME, release()];
       browserOptions = { browser };
@@ -724,7 +724,7 @@ export class BaileysStartupService extends ChannelStartupService {
       this.sendDataWebhook(Events.CALL, payload, true, ['websocket']);
     });
 
-    this.phoneNumber = number;
+    this.phoneNumber = number ?? this.phoneNumber;
 
     return this.client;
   }
