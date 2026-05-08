@@ -2710,9 +2710,7 @@ export class BaileysStartupService extends ChannelStartupService {
       };
     }
     if (status.type === 'image') {
-      const imageContent = isURL(status.content)
-        ? { url: status.content }
-        : Buffer.from(status.content, 'base64');
+      const imageContent = isURL(status.content) ? { url: status.content } : Buffer.from(status.content, 'base64');
       return {
         content: { image: imageContent, caption: status.caption },
         option: { statusJidList: status.statusJidList },
@@ -2720,9 +2718,7 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     if (status.type === 'video') {
-      const videoContent = isURL(status.content)
-        ? { url: status.content }
-        : Buffer.from(status.content, 'base64');
+      const videoContent = isURL(status.content) ? { url: status.content } : Buffer.from(status.content, 'base64');
       return {
         content: { video: videoContent, caption: status.caption },
         option: { statusJidList: status.statusJidList },
