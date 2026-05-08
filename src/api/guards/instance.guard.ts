@@ -59,6 +59,20 @@ export async function instanceLoggedGuard(req: Request, _: Response, next: NextF
       } catch (error) {
         logger.error(`Failed to clean up existing instance "${instance.instanceName}": ${error}`);
       }
+
+      // Verify the DB record is actually gone before allowing re-creation.
+      // cleaningStoreData deletes asynchronously and pgbouncer/connection-pool
+      // latency can cause the row to linger briefly.
+      const maxWait = 5;
+      for (let i = 0; i < maxWait; i++) {
+        const stillExists =
+          (await prismaRepository.instance.findMany({ where: { name: instance.instanceName } })).length > 0;
+        if (!stillExists) break;
+        logger.warn(
+          `instanceLoggedGuard: DB record for "${instance.instanceName}" still exists, waiting... (${i + 1}/${maxWait})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
     }
 
     if (waMonitor.waInstances[instance.instanceName]) {

@@ -62,11 +62,17 @@ export class SqsController extends EventController implements EventControllerInt
       }
     }
 
+    const instanceId = this.monitor.waInstances[instanceName]?.instanceId;
+    if (!instanceId) {
+      this.logger.warn(`set: instance "${instanceName}" not found in memory — skipping sqs upsert`);
+      return null;
+    }
+
     await this.saveQueues(instanceName, data[this.name].events, data[this.name]?.enabled);
 
     const payload: any = {
       where: {
-        instanceId: this.monitor.waInstances[instanceName].instanceId,
+        instanceId,
       },
       update: {
         enabled: data[this.name]?.enabled,
@@ -75,12 +81,19 @@ export class SqsController extends EventController implements EventControllerInt
       create: {
         enabled: data[this.name]?.enabled,
         events: data[this.name].events,
-        instanceId: this.monitor.waInstances[instanceName].instanceId,
+        instanceId,
       },
     };
 
-    console.log('*** payload: ', payload);
-    return this.prisma[this.name].upsert(payload);
+    try {
+      return await this.prisma[this.name].upsert(payload);
+    } catch (error) {
+      if (error?.code === 'P2003' || error?.code === 'P2025') {
+        this.logger.warn(`set: FK/record constraint for "${instanceName}" (instance deleted concurrently) — ignoring`);
+        return null;
+      }
+      throw error;
+    }
   }
 
   public async emit({

@@ -30,28 +30,42 @@ export class WebhookController extends EventController implements EventControlle
       }
     }
 
-    return this.prisma.webhook.upsert({
-      where: {
-        instanceId: this.monitor.waInstances[instanceName].instanceId,
-      },
-      update: {
-        enabled: data.webhook?.enabled,
-        events: data.webhook?.events,
-        url: data.webhook?.url,
-        headers: data.webhook?.headers,
-        webhookBase64: data.webhook.base64,
-        webhookByEvents: data.webhook.byEvents,
-      },
-      create: {
-        enabled: data.webhook?.enabled,
-        events: data.webhook?.events,
-        instanceId: this.monitor.waInstances[instanceName].instanceId,
-        url: data.webhook?.url,
-        headers: data.webhook?.headers,
-        webhookBase64: data.webhook.base64,
-        webhookByEvents: data.webhook.byEvents,
-      },
-    });
+    const instanceId = this.monitor.waInstances[instanceName]?.instanceId;
+    if (!instanceId) {
+      this.logger.warn(`set: instance "${instanceName}" not found in memory — skipping webhook upsert`);
+      return null;
+    }
+
+    try {
+      return await this.prisma.webhook.upsert({
+        where: {
+          instanceId,
+        },
+        update: {
+          enabled: data.webhook?.enabled,
+          events: data.webhook?.events,
+          url: data.webhook?.url,
+          headers: data.webhook?.headers,
+          webhookBase64: data.webhook.base64,
+          webhookByEvents: data.webhook.byEvents,
+        },
+        create: {
+          enabled: data.webhook?.enabled,
+          events: data.webhook?.events,
+          instanceId,
+          url: data.webhook?.url,
+          headers: data.webhook?.headers,
+          webhookBase64: data.webhook.base64,
+          webhookByEvents: data.webhook.byEvents,
+        },
+      });
+    } catch (error) {
+      if (error?.code === 'P2003' || error?.code === 'P2025') {
+        this.logger.warn(`set: FK/record constraint for "${instanceName}" (instance deleted concurrently) — ignoring`);
+        return null;
+      }
+      throw error;
+    }
   }
 
   public async emit({
