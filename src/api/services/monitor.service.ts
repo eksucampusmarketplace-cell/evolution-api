@@ -202,30 +202,39 @@ export class WAMonitoringService {
 
     rmSync(join(INSTANCE_DIR, instance.id), { recursive: true, force: true });
 
-    // Batch all cascading deletes inside a single interactive transaction so
-    // they share one database connection instead of acquiring a new one for
-    // each deleteMany call. With connection_limit=1 the sequential awaits
-    // previously caused P2024 "Timed out fetching a new connection" errors
-    // when concurrent requests competed for the single pool slot.
-    await this.prismaRepository.$transaction(async (tx) => {
-      await tx.session.deleteMany({ where: { sessionId: instance.id } });
-      await tx.chat.deleteMany({ where: { instanceId: instance.id } });
-      await tx.contact.deleteMany({ where: { instanceId: instance.id } });
-      await tx.messageUpdate.deleteMany({ where: { instanceId: instance.id } });
-      await tx.message.deleteMany({ where: { instanceId: instance.id } });
-      await tx.webhook.deleteMany({ where: { instanceId: instance.id } });
-      await tx.chatwoot.deleteMany({ where: { instanceId: instance.id } });
-      await tx.proxy.deleteMany({ where: { instanceId: instance.id } });
-      await tx.rabbitmq.deleteMany({ where: { instanceId: instance.id } });
-      await tx.nats.deleteMany({ where: { instanceId: instance.id } });
-      await tx.sqs.deleteMany({ where: { instanceId: instance.id } });
-      await tx.integrationSession.deleteMany({ where: { instanceId: instance.id } });
-      await tx.typebot.deleteMany({ where: { instanceId: instance.id } });
-      await tx.websocket.deleteMany({ where: { instanceId: instance.id } });
-      await tx.setting.deleteMany({ where: { instanceId: instance.id } });
-      await tx.label.deleteMany({ where: { instanceId: instance.id } });
-      await tx.instance.delete({ where: { name: instanceName } });
+    // Delete the instance record FIRST so the name is immediately freed for
+    // re-creation. The instanceLoggedGuard checks the DB for the name — if
+    // the instance row is gone, a new createInstance will pass the guard
+    // even while child-record cleanup is still running below.
+    await this.prismaRepository.instance.delete({ where: { name: instanceName } }).catch((error) => {
+      this.logger.error(`cleaningStoreData: failed to delete instance record for "${instanceName}": ${error}`);
     });
+
+    // Clean up child records sequentially. Each query acquires and releases
+    // the DB connection individually, which works well with connection_limit=1.
+    // Using $transaction here would hold the single connection for the entire
+    // batch, starving concurrent requests and causing P2028 timeouts.
+    const id = instance.id;
+    await this.prismaRepository.session.deleteMany({ where: { sessionId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.chat.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.contact.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.messageUpdate
+      .deleteMany({ where: { instanceId: id } })
+      .catch((e) => this.logger.error(e));
+    await this.prismaRepository.message.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.webhook.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.chatwoot.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.proxy.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.rabbitmq.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.nats.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.sqs.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.integrationSession
+      .deleteMany({ where: { instanceId: id } })
+      .catch((e) => this.logger.error(e));
+    await this.prismaRepository.typebot.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.websocket.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.setting.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
+    await this.prismaRepository.label.deleteMany({ where: { instanceId: id } }).catch((e) => this.logger.error(e));
   }
 
   public async loadInstance() {
@@ -397,24 +406,33 @@ export class WAMonitoringService {
     this.eventEmitter.on('remove.instance', async (instanceName: string) => {
       try {
         await this.waInstances[instanceName]?.sendDataWebhook(Events.REMOVE_INSTANCE, null);
-
-        this.clearDelInstanceTime(instanceName);
-
-        // Await both cleanup operations so the instance record is fully
-        // removed from the database before we delete the in-memory
-        // reference. Previously these were fire-and-forget, causing a
-        // race where a subsequent createInstance could still find the
-        // DB record and fail with 403 or P2002.
-        await this.cleaningUp(instanceName);
-        await this.cleaningStoreData(instanceName);
-      } finally {
-        this.logger.warn(`Instance "${instanceName}" - REMOVED`);
+      } catch (error) {
+        this.logger.error(error);
       }
 
+      this.clearDelInstanceTime(instanceName);
+
+      // Delete the in-memory reference FIRST so the instanceLoggedGuard
+      // immediately stops returning 403 "name already in use" for this
+      // instance name. DB cleanup follows and is best-effort.
       try {
         delete this.waInstances[instanceName];
       } catch (error) {
         this.logger.error(error);
+      }
+      this.logger.warn(`Instance "${instanceName}" - REMOVED`);
+
+      // DB cleanup: awaited so errors are logged, but each step has its
+      // own catch so a single failure doesn't abort the rest.
+      try {
+        await this.cleaningUp(instanceName);
+      } catch (error) {
+        this.logger.error(`cleaningUp failed for "${instanceName}": ${error}`);
+      }
+      try {
+        await this.cleaningStoreData(instanceName);
+      } catch (error) {
+        this.logger.error(`cleaningStoreData failed for "${instanceName}": ${error}`);
       }
     });
     this.eventEmitter.on('logout.instance', async (instanceName: string) => {
