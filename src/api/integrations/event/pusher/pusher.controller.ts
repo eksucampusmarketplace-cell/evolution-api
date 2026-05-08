@@ -71,30 +71,46 @@ export class PusherController extends EventController implements EventController
     } else if (data.pusher.events.length === 0) {
       data.pusher.events = EventController.events;
     }
-    const instance = await this.prisma.pusher.upsert({
-      where: {
-        instanceId: this.monitor.waInstances[instanceName].instanceId,
-      },
-      update: {
-        enabled: data.pusher.enabled,
-        events: data.pusher.events,
-        appId: data.pusher.appId,
-        key: data.pusher.key,
-        secret: data.pusher.secret,
-        cluster: data.pusher.cluster,
-        useTLS: data.pusher.useTLS,
-      },
-      create: {
-        enabled: data.pusher.enabled,
-        events: data.pusher.events,
-        instanceId: this.monitor.waInstances[instanceName].instanceId,
-        appId: data.pusher.appId,
-        key: data.pusher.key,
-        secret: data.pusher.secret,
-        cluster: data.pusher.cluster,
-        useTLS: data.pusher.useTLS,
-      },
-    });
+
+    const instanceId = this.monitor.waInstances[instanceName]?.instanceId;
+    if (!instanceId) {
+      this.logger.warn(`set: instance "${instanceName}" not found in memory — skipping pusher upsert`);
+      return null;
+    }
+
+    let instance: wa.LocalPusher;
+    try {
+      instance = await this.prisma.pusher.upsert({
+        where: {
+          instanceId,
+        },
+        update: {
+          enabled: data.pusher.enabled,
+          events: data.pusher.events,
+          appId: data.pusher.appId,
+          key: data.pusher.key,
+          secret: data.pusher.secret,
+          cluster: data.pusher.cluster,
+          useTLS: data.pusher.useTLS,
+        },
+        create: {
+          enabled: data.pusher.enabled,
+          events: data.pusher.events,
+          instanceId,
+          appId: data.pusher.appId,
+          key: data.pusher.key,
+          secret: data.pusher.secret,
+          cluster: data.pusher.cluster,
+          useTLS: data.pusher.useTLS,
+        },
+      });
+    } catch (error) {
+      if (error?.code === 'P2003' || error?.code === 'P2025') {
+        this.logger.warn(`set: FK/record constraint for "${instanceName}" (instance deleted concurrently) — ignoring`);
+        return null;
+      }
+      throw error;
+    }
     if (instance.enabled && instance.appId && instance.key && instance.secret && instance.cluster) {
       this.pusherClients[instanceName] = new Pusher({
         appId: instance.appId,

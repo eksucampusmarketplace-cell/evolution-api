@@ -97,20 +97,32 @@ export class EventController {
       }
     }
 
-    return this.prisma[this.name].upsert({
-      where: {
-        instanceId: this.monitor.waInstances[instanceName].instanceId,
-      },
-      update: {
-        enabled: data[this.name]?.enabled,
-        events: data[this.name].events,
-      },
-      create: {
-        enabled: data[this.name]?.enabled,
-        events: data[this.name].events,
-        instanceId: this.monitor.waInstances[instanceName].instanceId,
-      },
-    });
+    const instanceId = this.monitor.waInstances[instanceName]?.instanceId;
+    if (!instanceId) {
+      return null;
+    }
+
+    try {
+      return await this.prisma[this.name].upsert({
+        where: {
+          instanceId,
+        },
+        update: {
+          enabled: data[this.name]?.enabled,
+          events: data[this.name].events,
+        },
+        create: {
+          enabled: data[this.name]?.enabled,
+          events: data[this.name].events,
+          instanceId,
+        },
+      });
+    } catch (error) {
+      if (error?.code === 'P2003' || error?.code === 'P2025') {
+        return null;
+      }
+      throw error;
+    }
   }
 
   public async get(instanceName: string): Promise<wa.LocalEvent> {

@@ -254,20 +254,28 @@ export class WAMonitoringService {
   public async saveInstance(data: any) {
     try {
       const clientName = await this.configService.get<Database>('DATABASE').CONNECTION.CLIENT_NAME;
-      await this.prismaRepository.instance.create({
-        data: {
+      const instanceData = {
+        ownerJid: data.ownerJid,
+        profileName: data.profileName,
+        profilePicUrl: data.profilePicUrl,
+        connectionStatus:
+          data.integration && data.integration === Integration.WHATSAPP_BAILEYS ? 'close' : (data.status ?? 'open'),
+        number: data.number,
+        integration: data.integration || Integration.WHATSAPP_BAILEYS,
+        token: data.hash,
+        clientName: clientName,
+        businessId: data.businessId,
+      };
+      await this.prismaRepository.instance.upsert({
+        where: { name: data.instanceName },
+        update: {
+          id: data.instanceId,
+          ...instanceData,
+        },
+        create: {
           id: data.instanceId,
           name: data.instanceName,
-          ownerJid: data.ownerJid,
-          profileName: data.profileName,
-          profilePicUrl: data.profilePicUrl,
-          connectionStatus:
-            data.integration && data.integration === Integration.WHATSAPP_BAILEYS ? 'close' : (data.status ?? 'open'),
-          number: data.number,
-          integration: data.integration || Integration.WHATSAPP_BAILEYS,
-          token: data.hash,
-          clientName: clientName,
-          businessId: data.businessId,
+          ...instanceData,
         },
       });
     } catch (error) {
