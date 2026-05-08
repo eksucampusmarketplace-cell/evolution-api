@@ -206,7 +206,7 @@ export class WAMonitoringService {
     // re-creation. The instanceLoggedGuard checks the DB for the name — if
     // the instance row is gone, a new createInstance will pass the guard
     // even while child-record cleanup is still running below.
-    await this.prismaRepository.instance.delete({ where: { name: instanceName } }).catch((error) => {
+    await this.prismaRepository.instance.deleteMany({ where: { name: instanceName } }).catch((error) => {
       this.logger.error(`cleaningStoreData: failed to delete instance record for "${instanceName}": ${error}`);
     });
 
