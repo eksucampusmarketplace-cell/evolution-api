@@ -2,7 +2,7 @@ import { InstanceDto } from '@api/dto/instance.dto';
 import { cache, prismaRepository, waMonitor } from '@api/server.module';
 import { CacheConf, configService } from '@config/env.config';
 import { Logger } from '@config/logger.config';
-import { BadRequestException, ForbiddenException, InternalServerErrorException, NotFoundException } from '@exceptions';
+import { BadRequestException, InternalServerErrorException, NotFoundException } from '@exceptions';
 import { NextFunction, Request, Response } from 'express';
 
 const logger = new Logger('InstanceGuard');
@@ -22,23 +22,6 @@ async function getInstance(instanceName: string) {
     return exists || (await prismaRepository.instance.findMany({ where: { name: instanceName } })).length > 0;
   } catch (error) {
     throw new InternalServerErrorException(error?.toString());
-  }
-}
-
-async function isInstanceOnlyInDatabase(instanceName: string): Promise<boolean> {
-  const inMemory = !!waMonitor.waInstances[instanceName];
-  if (inMemory) return false;
-
-  const dbRecords = await prismaRepository.instance.findMany({ where: { name: instanceName } });
-  return dbRecords.length > 0;
-}
-
-async function removeStaleInstance(instanceName: string): Promise<void> {
-  try {
-    await waMonitor.cleaningStoreData(instanceName);
-    logger.warn(`Removed stale database record for instance "${instanceName}" (not loaded in memory)`);
-  } catch (error) {
-    logger.error(`Failed to remove stale instance "${instanceName}": ${error}`);
   }
 }
 
@@ -63,13 +46,18 @@ export async function instanceLoggedGuard(req: Request, _: Response, next: NextF
   if (req.originalUrl.includes('/instance/create')) {
     const instance = req.body as InstanceDto;
     if (await getInstance(instance.instanceName)) {
-      if (await isInstanceOnlyInDatabase(instance.instanceName)) {
-        logger.warn(
-          `Instance "${instance.instanceName}" exists in database but not in memory (stale after restart). Cleaning up for re-creation.`,
-        );
-        await removeStaleInstance(instance.instanceName);
-      } else {
-        throw new ForbiddenException(`This name "${instance.instanceName}" is already in use.`);
+      // Always clean up the existing instance when a create is requested.
+      // The caller has already expressed intent to (re)create — blocking with
+      // 403 just leaves zombie instances that can never be replaced.  This
+      // handles: stale-after-restart, zombie Baileys connections still in
+      // memory, race conditions with async delete cleanup, and multi-process
+      // in-memory state inconsistencies.
+      logger.warn(`Instance "${instance.instanceName}" already exists — cleaning up for re-creation`);
+      try {
+        await waMonitor.cleaningUp(instance.instanceName);
+        await waMonitor.cleaningStoreData(instance.instanceName);
+      } catch (error) {
+        logger.error(`Failed to clean up existing instance "${instance.instanceName}": ${error}`);
       }
     }
 
