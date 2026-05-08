@@ -129,31 +129,39 @@ export class ChannelStartupService {
   }
 
   public async loadWebhook() {
-    const data = await this.prismaRepository.webhook.findUnique({
-      where: {
-        instanceId: this.instanceId,
-      },
-    });
+    try {
+      const data = await this.prismaRepository.webhook.findUnique({
+        where: {
+          instanceId: this.instanceId,
+        },
+      });
 
-    this.localWebhook.enabled = data?.enabled;
-    this.localWebhook.webhookBase64 = data?.webhookBase64;
+      this.localWebhook.enabled = data?.enabled;
+      this.localWebhook.webhookBase64 = data?.webhookBase64;
+    } catch (error) {
+      this.logger.error(`loadWebhook failed for "${this.instanceName}": ${error}`);
+    }
   }
 
   public async loadSettings() {
-    const data = await this.prismaRepository.setting.findUnique({
-      where: {
-        instanceId: this.instanceId,
-      },
-    });
+    try {
+      const data = await this.prismaRepository.setting.findUnique({
+        where: {
+          instanceId: this.instanceId,
+        },
+      });
 
-    this.localSettings.rejectCall = data?.rejectCall;
-    this.localSettings.msgCall = data?.msgCall;
-    this.localSettings.groupsIgnore = data?.groupsIgnore;
-    this.localSettings.alwaysOnline = data?.alwaysOnline;
-    this.localSettings.readMessages = data?.readMessages;
-    this.localSettings.readStatus = data?.readStatus;
-    this.localSettings.syncFullHistory = data?.syncFullHistory;
-    this.localSettings.wavoipToken = data?.wavoipToken;
+      this.localSettings.rejectCall = data?.rejectCall;
+      this.localSettings.msgCall = data?.msgCall;
+      this.localSettings.groupsIgnore = data?.groupsIgnore;
+      this.localSettings.alwaysOnline = data?.alwaysOnline;
+      this.localSettings.readMessages = data?.readMessages;
+      this.localSettings.readStatus = data?.readStatus;
+      this.localSettings.syncFullHistory = data?.syncFullHistory;
+      this.localSettings.wavoipToken = data?.wavoipToken;
+    } catch (error) {
+      this.logger.error(`loadSettings failed for "${this.instanceName}": ${error}`);
+    }
   }
 
   public async setSettings(data: SettingsDto) {
@@ -227,26 +235,30 @@ export class ChannelStartupService {
       return;
     }
 
-    const data = await this.prismaRepository.chatwoot.findUnique({
-      where: {
-        instanceId: this.instanceId,
-      },
-    });
+    try {
+      const data = await this.prismaRepository.chatwoot.findUnique({
+        where: {
+          instanceId: this.instanceId,
+        },
+      });
 
-    this.localChatwoot.enabled = data?.enabled;
-    this.localChatwoot.accountId = data?.accountId;
-    this.localChatwoot.token = data?.token;
-    this.localChatwoot.url = data?.url;
-    this.localChatwoot.nameInbox = data?.nameInbox;
-    this.localChatwoot.signMsg = data?.signMsg;
-    this.localChatwoot.signDelimiter = data?.signDelimiter;
-    this.localChatwoot.number = data?.number;
-    this.localChatwoot.reopenConversation = data?.reopenConversation;
-    this.localChatwoot.conversationPending = data?.conversationPending;
-    this.localChatwoot.mergeBrazilContacts = data?.mergeBrazilContacts;
-    this.localChatwoot.importContacts = data?.importContacts;
-    this.localChatwoot.importMessages = data?.importMessages;
-    this.localChatwoot.daysLimitImportMessages = data?.daysLimitImportMessages;
+      this.localChatwoot.enabled = data?.enabled;
+      this.localChatwoot.accountId = data?.accountId;
+      this.localChatwoot.token = data?.token;
+      this.localChatwoot.url = data?.url;
+      this.localChatwoot.nameInbox = data?.nameInbox;
+      this.localChatwoot.signMsg = data?.signMsg;
+      this.localChatwoot.signDelimiter = data?.signDelimiter;
+      this.localChatwoot.number = data?.number;
+      this.localChatwoot.reopenConversation = data?.reopenConversation;
+      this.localChatwoot.conversationPending = data?.conversationPending;
+      this.localChatwoot.mergeBrazilContacts = data?.mergeBrazilContacts;
+      this.localChatwoot.importContacts = data?.importContacts;
+      this.localChatwoot.importMessages = data?.importMessages;
+      this.localChatwoot.daysLimitImportMessages = data?.daysLimitImportMessages;
+    } catch (error) {
+      this.logger.error(`loadChatwoot failed for "${this.instanceName}": ${error}`);
+    }
   }
 
   public async setChatwoot(data: ChatwootDto) {
@@ -375,19 +387,23 @@ export class ChannelStartupService {
       this.localProxy.password = proxyConfig.PASSWORD;
     }
 
-    const data = await this.prismaRepository.proxy.findUnique({
-      where: {
-        instanceId: this.instanceId,
-      },
-    });
+    try {
+      const data = await this.prismaRepository.proxy.findUnique({
+        where: {
+          instanceId: this.instanceId,
+        },
+      });
 
-    if (data?.enabled) {
-      this.localProxy.enabled = true;
-      this.localProxy.host = data?.host;
-      this.localProxy.port = data?.port;
-      this.localProxy.protocol = data?.protocol;
-      this.localProxy.username = data?.username;
-      this.localProxy.password = data?.password;
+      if (data?.enabled) {
+        this.localProxy.enabled = true;
+        this.localProxy.host = data?.host;
+        this.localProxy.port = data?.port;
+        this.localProxy.protocol = data?.protocol;
+        this.localProxy.username = data?.username;
+        this.localProxy.password = data?.password;
+      }
+    } catch (error) {
+      this.logger.error(`loadProxy failed for "${this.instanceName}": ${error}`);
     }
   }
 

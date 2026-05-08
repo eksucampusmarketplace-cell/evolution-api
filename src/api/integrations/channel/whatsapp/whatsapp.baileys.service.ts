@@ -731,10 +731,12 @@ export class BaileysStartupService extends ChannelStartupService {
 
   public async connectToWhatsapp(number?: string): Promise<WASocket> {
     try {
-      this.loadChatwoot();
-      this.loadSettings();
-      this.loadWebhook();
-      this.loadProxy();
+      // Await each load sequentially to avoid exhausting the DB connection
+      // pool (connection_limit may be as low as 1 on free-tier databases).
+      await this.loadChatwoot();
+      await this.loadSettings();
+      await this.loadWebhook();
+      await this.loadProxy();
 
       // Remontar o messageProcessor para garantir que está funcionando após reconexão
       this.messageProcessor.mount({
