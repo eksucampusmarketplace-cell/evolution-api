@@ -432,6 +432,14 @@ export class BaileysStartupService extends ChannelStartupService {
 
     if (connection === 'close') {
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+
+      // Guard against infinite QR code loop: if we never fully connected
+      // (no wuid) and there's no status code, don't attempt reconnection
+      if (!this.instance.wuid && !statusCode) {
+        this.logger.warn('Connection closed before QR was scanned (no wuid, no statusCode) — skipping reconnect to prevent loop');
+        return;
+      }
+
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406, 428];
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
       if (shouldReconnect) {
@@ -1572,6 +1580,11 @@ export class BaileysStartupService extends ChannelStartupService {
       const readChatToUpdate: Record<string, true> = {}; // {remoteJid: true}
 
       for await (const { key, update } of args) {
+        // Resolve @lid to @s.whatsapp.net for consistent lookups
+        if (key.remoteJid?.includes('@lid') && (key as any).remoteJidAlt) {
+          key.remoteJid = (key as any).remoteJidAlt;
+        }
+
         if (settings?.groupsIgnore && key.remoteJid?.includes('@g.us')) {
           continue;
         }
