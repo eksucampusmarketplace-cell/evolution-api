@@ -1,13 +1,21 @@
 version: "3.8"
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   api:
     container_name: evolution_api
     image: evoapicloud/evolution-api:latest
-    restart: always
+    restart: unless-stopped
     depends_on:
-      - redis
-      - evolution-postgres
+      redis:
+        condition: service_healthy
+      evolution-postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -19,22 +27,50 @@ services:
       - .env
     expose:
       - "8080"
+    environment:
+      - NODE_ENV=production
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   frontend:
     container_name: evolution_frontend
     image: evoapicloud/evolution-manager:latest
-    restart: always
+    restart: unless-stopped
     ports:
       - "3000:80"
     networks:
       - evolution-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   redis:
     container_name: evolution_redis
     image: redis:latest
-    restart: always
+    restart: unless-stopped
     command: >
-      redis-server --port 6379 --appendonly yes
+      redis-server --port 6379 --appendonly yes --maxmemory 200mb --maxmemory-policy allkeys-lru
     volumes:
       - evolution_redis:/data
     networks:
@@ -46,11 +82,24 @@ services:
           - evolution-redis
     expose:
       - "6379"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   evolution-postgres:
     container_name: evolution_postgres
     image: postgres:15
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     command:
@@ -70,6 +119,19 @@ services:
       - dokploy-network
     expose:
       - "5432"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USERNAME:-postgres}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
 volumes:
   evolution_instances:
