@@ -4183,7 +4183,7 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async updateMessage(data: UpdateMessageDto) {
-    const jid = createJid(data.number);
+    let jid = createJid(data.number);
 
     const options = await this.formatUpdateMessage(data);
 
@@ -4196,8 +4196,21 @@ export class BaileysStartupService extends ChannelStartupService {
       const oldMessage: any = await this.getMessage(data.key, true);
       if (this.configService.get<Database>('DATABASE').SAVE_DATA.NEW_MESSAGE) {
         if (!oldMessage) throw new NotFoundException('Message not found');
-        if (oldMessage?.key?.remoteJid !== jid) {
-          throw new BadRequestException('RemoteJid does not match');
+        const storedJid = oldMessage?.key?.remoteJid;
+        if (storedJid !== jid) {
+          // LID/phone JID mismatch: the stored message may use @lid while
+          // the request uses @s.whatsapp.net (or vice versa). Check the
+          // stored remoteJidAlt for equivalence before rejecting.
+          const storedAlt = oldMessage?.key?.remoteJidAlt;
+          if (storedAlt === jid || storedJid === createJid(data.number)) {
+            jid = storedJid;
+          } else if (storedJid?.includes('@lid') || storedAlt?.includes('@lid')) {
+            // The stored message uses LID addressing — use the stored JID
+            // so the edit targets the correct conversation.
+            jid = storedJid;
+          } else {
+            throw new BadRequestException('RemoteJid does not match');
+          }
         }
         if (oldMessage?.messageTimestamp > Date.now() + 900000) {
           // 15 minutes in milliseconds
@@ -4205,7 +4218,9 @@ export class BaileysStartupService extends ChannelStartupService {
         }
       }
 
-      const messageSent = await this.client.sendMessage(jid, { ...(options as any), edit: data.key });
+      // Ensure the edit key uses the same JID format as the resolved jid
+      const editKey = { ...data.key, remoteJid: jid };
+      const messageSent = await this.client.sendMessage(jid, { ...(options as any), edit: editKey });
       if (messageSent) {
         const editedMessage =
           messageSent?.message?.protocolMessage || messageSent?.message?.editedMessage?.message?.protocolMessage;
