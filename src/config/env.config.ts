@@ -389,6 +389,12 @@ export type EventEmitter = {
   MAX_LISTENERS: number;
 };
 
+export type KeepAlive = {
+  ENABLED: boolean;
+  INTERVAL: number;
+  URLS: string[];
+};
+
 export type Production = boolean;
 
 export interface Env {
@@ -428,6 +434,7 @@ export interface Env {
   FACEBOOK: Facebook;
   SENTRY: Sentry;
   EVENT_EMITTER: EventEmitter;
+  KEEP_ALIVE: KeepAlive;
   PRODUCTION?: Production;
 }
 
@@ -902,6 +909,14 @@ export class ConfigService {
       },
       EVENT_EMITTER: {
         MAX_LISTENERS: Number.parseInt(process.env?.EVENT_EMITTER_MAX_LISTENERS) || 50,
+      },
+      KEEP_ALIVE: {
+        ENABLED: process.env?.KEEP_ALIVE_ENABLED === 'true',
+        INTERVAL: Number.parseInt(process.env?.KEEP_ALIVE_INTERVAL) || 10,
+        URLS:
+          process.env?.KEEP_ALIVE_URLS?.split(',')
+            .map((url) => url.trim())
+            .filter(Boolean) || [],
       },
     };
   }

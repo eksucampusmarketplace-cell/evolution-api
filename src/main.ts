@@ -11,6 +11,7 @@ import {
   configService,
   Cors,
   HttpServer,
+  KeepAlive,
   ProviderSession,
   Sentry as SentryConfig,
   Webhook,
@@ -158,6 +159,29 @@ async function bootstrap() {
   }
 
   server.listen(httpServer.PORT, () => logger.log(httpServer.TYPE.toUpperCase() + ' - ON: ' + httpServer.PORT));
+
+  const keepAlive = configService.get<KeepAlive>('KEEP_ALIVE');
+  if (keepAlive.ENABLED) {
+    const intervalMs = keepAlive.INTERVAL * 60 * 1000;
+    const urls = [...keepAlive.URLS];
+
+    if (httpServer.URL) {
+      urls.unshift(httpServer.URL);
+    }
+
+    if (urls.length > 0) {
+      logger.info(`Keep-alive pinging ${urls.length} URL(s) every ${keepAlive.INTERVAL}m`);
+
+      setInterval(() => {
+        for (const url of urls) {
+          axios
+            .get(url, { timeout: 15000 })
+            .then(() => logger.verbose(`Keep-alive OK: ${url}`))
+            .catch((err) => logger.warn(`Keep-alive failed: ${url} - ${err.message}`));
+        }
+      }, intervalMs);
+    }
+  }
 
   initWA().catch((error) => {
     logger.error('Error loading instances: ' + error);
