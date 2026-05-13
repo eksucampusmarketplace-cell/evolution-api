@@ -439,22 +439,36 @@ export class BaileysStartupService extends ChannelStartupService {
       // entering the code while the proxy drops the WebSocket, so we MUST
       // reconnect to keep the pairing code valid.
       if (!this.instance.wuid && !statusCode && !this.phoneNumber) {
-        this.logger.warn('Connection closed before QR was scanned (no wuid, no statusCode, no phoneNumber) — skipping reconnect to prevent loop');
+        this.logger.warn(
+          'Connection closed before QR was scanned (no wuid, no statusCode, no phoneNumber) — skipping reconnect to prevent loop',
+        );
         return;
       }
 
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406, 428];
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
-      if (shouldReconnect) {
-        // Preserve existing pairing code across reconnections instead of clearing it.
-        // Each requestPairingCode() call invalidates the previous code, so re-requesting
-        // on every proxy-induced reconnect means the user's code becomes invalid before
-        // they can enter it. The pairing code is tied to the auth state identity keys
-        // which persist across reconnects, so the original code stays valid.
-        // The guard in connectionUpdate (if (!this.instance.qrcode.pairingCode)) ensures
-        // a new code is only requested when there isn't one already.
-        // Reset QR count so reconnections don't hit the QR limit prematurely.
+
+      // During pairing (phoneNumber set, no wuid yet), always reconnect regardless
+      // of disconnect reason. Baileys QR refs exhaust after ~5 rotations (~3.5 min)
+      // and WhatsApp closes the connection with 428 (connectionClosed). Without this
+      // override, 428 is in codesToNotReconnect and triggers LOGOUT — killing the
+      // pairing session before the user can enter the code.
+      const isPairing = !!this.phoneNumber && !this.instance.wuid;
+      if (isPairing || shouldReconnect) {
+        if (isPairing && !shouldReconnect) {
+          this.logger.info('Pairing in progress — reconnecting despite disconnect code ' + statusCode);
+        }
         this.instance.qrcode.count = 0;
+        // Clear pairing code on reconnect so a fresh one is requested.
+        // Each new socket creates a new registration session with WhatsApp;
+        // the old code is tied to the old session and is no longer valid.
+        this.instance.qrcode.pairingCode = null;
+        // Add delay before pairing reconnect to avoid rapid-fire reconnection loops.
+        // WhatsApp rate-limits connections; without this delay the instance reconnects
+        // every 2-5 seconds and gets immediately kicked again.
+        if (isPairing) {
+          await delay(5000);
+        }
         await this.connectToWhatsapp(this.phoneNumber);
       } else {
         this.sendDataWebhook(Events.STATUS_INSTANCE, {
