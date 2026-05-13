@@ -249,6 +249,7 @@ export class BaileysStartupService extends ChannelStartupService {
   private readonly msgRetryCounterCache: CacheStore = new NodeCache();
   private readonly userDevicesCache: CacheStore = new NodeCache({ stdTTL: 300000, useClones: false });
   private endSession = false;
+  private pairingReconnectCount = 0;
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
   private eventProcessingQueue: Promise<void> = Promise.resolve();
 
@@ -434,17 +435,66 @@ export class BaileysStartupService extends ChannelStartupService {
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
 
       // Guard against infinite QR code loop: if we never fully connected
-      // (no wuid) and there's no status code, don't attempt reconnection
-      if (!this.instance.wuid && !statusCode) {
-        this.logger.warn('Connection closed before QR was scanned (no wuid, no statusCode) — skipping reconnect to prevent loop');
+      // (no wuid) and there's no status code, don't attempt reconnection.
+      // Exception: pairing code mode (phoneNumber set) — the user may be
+      // entering the code while the proxy drops the WebSocket, so we MUST
+      // reconnect to keep the pairing code valid.
+      if (!this.instance.wuid && !statusCode && !this.phoneNumber) {
+        this.logger.warn(
+          'Connection closed before QR was scanned (no wuid, no statusCode, no phoneNumber) — skipping reconnect to prevent loop',
+        );
         return;
       }
 
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406, 428];
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
-      if (shouldReconnect) {
-        // Clear stale pairing code so a fresh one is requested on reconnect
+
+      // During pairing (phoneNumber set, no wuid yet), always reconnect regardless
+      // of disconnect reason. Baileys QR refs exhaust after ~5 rotations (~3.5 min)
+      // and WhatsApp closes the connection with 428 (connectionClosed). Without this
+      // override, 428 is in codesToNotReconnect and triggers LOGOUT — killing the
+      // pairing session before the user can enter the code.
+      const isPairing = !!this.phoneNumber && !this.instance.wuid;
+      if (isPairing || shouldReconnect) {
+        if (isPairing && !shouldReconnect) {
+          this.logger.info('Pairing in progress — reconnecting despite disconnect code ' + statusCode);
+        }
+        this.instance.qrcode.count = 0;
         this.instance.qrcode.pairingCode = null;
+
+        if (isPairing) {
+          this.pairingReconnectCount++;
+          // After the initial 3.5-min window, WhatsApp rate-limits reconnections
+          // (each new socket only gets 1-2 QR refs = seconds). To get a fresh
+          // 3.5-min window, delete auth state so WhatsApp treats it as a new
+          // device registration and allocates a full set of refs.
+          if (this.pairingReconnectCount > 1) {
+            const waitMs = Math.min(15000, 5000 * this.pairingReconnectCount);
+            this.logger.info(
+              `Pairing reconnect #${this.pairingReconnectCount} — clearing auth state and waiting ${waitMs / 1000}s for fresh registration`,
+            );
+            try {
+              if (this.instance.authState?.state?.keys) {
+                const authState = await this.defineAuthState();
+                if (authState && 'removeCreds' in authState) {
+                  await (authState as any).removeCreds();
+                }
+              }
+              const sessionExists = await this.prismaRepository.session.findFirst({
+                where: { sessionId: this.instanceId },
+              });
+              if (sessionExists) {
+                await this.prismaRepository.session.delete({ where: { sessionId: this.instanceId } });
+              }
+            } catch (e) {
+              this.logger.warn('Failed to clear auth state for pairing reset: ' + e);
+            }
+            await delay(waitMs);
+          } else {
+            await delay(5000);
+          }
+        }
+
         await this.connectToWhatsapp(this.phoneNumber);
       } else {
         this.sendDataWebhook(Events.STATUS_INSTANCE, {
@@ -483,6 +533,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
     if (connection === 'open') {
       this.instance.wuid = this.client.user.id.replace(/:\d+/, '');
+      this.pairingReconnectCount = 0;
       try {
         const profilePic = await this.profilePicture(this.instance.wuid);
         this.instance.profilePictureUrl = profilePic.profilePictureUrl;
