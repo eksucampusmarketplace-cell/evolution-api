@@ -434,17 +434,27 @@ export class BaileysStartupService extends ChannelStartupService {
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
 
       // Guard against infinite QR code loop: if we never fully connected
-      // (no wuid) and there's no status code, don't attempt reconnection
-      if (!this.instance.wuid && !statusCode) {
-        this.logger.warn('Connection closed before QR was scanned (no wuid, no statusCode) — skipping reconnect to prevent loop');
+      // (no wuid) and there's no status code, don't attempt reconnection.
+      // Exception: pairing code mode (phoneNumber set) — the user may be
+      // entering the code while the proxy drops the WebSocket, so we MUST
+      // reconnect to keep the pairing code valid.
+      if (!this.instance.wuid && !statusCode && !this.phoneNumber) {
+        this.logger.warn('Connection closed before QR was scanned (no wuid, no statusCode, no phoneNumber) — skipping reconnect to prevent loop');
         return;
       }
 
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406, 428];
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
       if (shouldReconnect) {
-        // Clear stale pairing code so a fresh one is requested on reconnect
-        this.instance.qrcode.pairingCode = null;
+        // Preserve existing pairing code across reconnections instead of clearing it.
+        // Each requestPairingCode() call invalidates the previous code, so re-requesting
+        // on every proxy-induced reconnect means the user's code becomes invalid before
+        // they can enter it. The pairing code is tied to the auth state identity keys
+        // which persist across reconnects, so the original code stays valid.
+        // The guard in connectionUpdate (if (!this.instance.qrcode.pairingCode)) ensures
+        // a new code is only requested when there isn't one already.
+        // Reset QR count so reconnections don't hit the QR limit prematurely.
+        this.instance.qrcode.count = 0;
         await this.connectToWhatsapp(this.phoneNumber);
       } else {
         this.sendDataWebhook(Events.STATUS_INSTANCE, {
