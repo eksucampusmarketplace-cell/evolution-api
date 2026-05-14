@@ -252,6 +252,11 @@ export class BaileysStartupService extends ChannelStartupService {
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
   private eventProcessingQueue: Promise<void> = Promise.resolve();
 
+  // Track consecutive 428 disconnects to prevent infinite reconnect loops.
+  // Resets to 0 on successful connection (connection === 'open').
+  private consecutive428Count = 0;
+  private readonly MAX_428_RETRIES = 5;
+
   // Cache TTL constants (in seconds)
   private readonly MESSAGE_CACHE_TTL_SECONDS = 5 * 60; // 5 minutes - avoid duplicate message processing
   private readonly UPDATE_CACHE_TTL_SECONDS = 30 * 60; // 30 minutes - avoid duplicate status updates
@@ -442,9 +447,60 @@ export class BaileysStartupService extends ChannelStartupService {
         return;
       }
 
-      const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406, 428];
+      // 428 (Connection Closed / Precondition Required) is a TEMPORARY
+      // disconnection — NOT a real logout. WhatsApp sends 428 for network
+      // interruptions, server rotations, rate-limiting, and keepalive
+      // timeouts. We MUST reconnect with saved auth creds instead of
+      // treating it as a permanent logout that wipes all session data.
+      const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406];
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
-      if (shouldReconnect) {
+
+      if (statusCode === 428) {
+        this.consecutive428Count++;
+        if (this.consecutive428Count > this.MAX_428_RETRIES) {
+          // Too many consecutive 428s — stop reconnecting to avoid a loop.
+          // Mark as closed and let the external orchestrator handle re-pairing.
+          this.logger.error(
+            `Too many consecutive 428 disconnects (${this.consecutive428Count}) for "${this.instance.name}" — giving up`,
+          );
+          this.consecutive428Count = 0;
+          await this.prismaRepository.instance.update({
+            where: { id: this.instanceId },
+            data: {
+              connectionStatus: 'close',
+              disconnectionAt: new Date(),
+              disconnectionReasonCode: statusCode,
+              disconnectionObject: JSON.stringify(lastDisconnect),
+            },
+          });
+          this.sendDataWebhook(Events.CONNECTION_UPDATE, { instance: this.instance.name, ...this.stateConnection });
+        } else {
+          // 428 = Connection Closed by WhatsApp. Reconnect after a cooldown
+          // with exponential backoff to avoid hammering the server.
+          const baseMs = 5000 * this.consecutive428Count;
+          const cooldownMs = baseMs + Math.floor(Math.random() * 10000);
+          this.logger.warn(
+            `Connection closed with 428 for "${this.instance.name}" (attempt ${this.consecutive428Count}/${this.MAX_428_RETRIES}) — reconnecting in ${cooldownMs}ms`,
+          );
+          await this.prismaRepository.instance.update({
+            where: { id: this.instanceId },
+            data: {
+              connectionStatus: 'connecting',
+              disconnectionAt: new Date(),
+              disconnectionReasonCode: statusCode,
+              disconnectionObject: JSON.stringify(lastDisconnect),
+            },
+          });
+          this.sendDataWebhook(Events.CONNECTION_UPDATE, {
+            instance: this.instance.name,
+            state: 'connecting',
+            statusReason: statusCode,
+          });
+          await delay(cooldownMs);
+          this.instance.qrcode.pairingCode = null;
+          await this.connectToWhatsapp(this.phoneNumber);
+        }
+      } else if (shouldReconnect) {
         // Clear stale pairing code so a fresh one is requested on reconnect
         this.instance.qrcode.pairingCode = null;
         await this.connectToWhatsapp(this.phoneNumber);
@@ -484,6 +540,8 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     if (connection === 'open') {
+      this.consecutive428Count = 0; // Reset on successful connection
+
       this.instance.wuid = this.client.user.id.replace(/:\d+/, '');
       try {
         const profilePic = await this.profilePicture(this.instance.wuid);

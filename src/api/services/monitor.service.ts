@@ -545,7 +545,24 @@ export class WAMonitoringService {
           this.waInstances[instanceName]?.clearCacheChatwoot();
         }
 
-        this.cleaningUp(instanceName);
+        // Preserve auth credentials on logout so the instance can
+        // reconnect using saved session data. Only update the connection
+        // status to 'close' — do NOT call cleaningUp() which deletes
+        // session creds from the database and filesystem, making
+        // reconnection impossible. Full cleanup (cleaningUp +
+        // cleaningStoreData) only runs on explicit instance removal
+        // via the 'remove.instance' event.
+        if (this.db.SAVE_DATA.INSTANCE) {
+          const findInstance = await this.prismaRepository.instance.findFirst({
+            where: { name: instanceName },
+          });
+          if (findInstance) {
+            await this.prismaRepository.instance.update({
+              where: { name: instanceName },
+              data: { connectionStatus: 'close' },
+            });
+          }
+        }
       } finally {
         this.logger.warn(`Instance "${instanceName}" - LOGOUT`);
       }
