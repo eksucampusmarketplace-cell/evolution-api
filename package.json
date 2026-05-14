@@ -122,7 +122,6 @@
     "socket.io-client": "^4.8.1",
     "socks-proxy-agent": "^8.0.5",
     "swagger-ui-express": "^5.0.1",
-    "tsup": "^8.3.5",
     "undici": "^7.16.0",
     "uuid": "^13.0.0"
   },
@@ -152,6 +151,7 @@
     "lint-staged": "^16.1.6",
     "prettier": "^3.4.2",
     "tsconfig-paths": "^4.2.0",
+    "tsup": "^8.3.5",
     "tsx": "^4.20.5",
     "typescript": "^5.7.2"
   }
