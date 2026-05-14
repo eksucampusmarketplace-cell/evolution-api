@@ -510,12 +510,15 @@ export class BaileysStartupService extends ChannelStartupService {
             statusReason: statusCode,
           });
           await delay(cooldownMs);
-          this.instance.qrcode.pairingCode = null;
+          // Keep existing pairingCode — clearing it causes requestPairingCode() to
+          // generate a new code on reconnect, invalidating the code the user is
+          // entering. The code stays stable across 428 reconnects; if it truly
+          // expired, the Botwave PAIRING_TIMEOUT will restart with a fresh code.
           await this.connectToWhatsapp(this.phoneNumber);
         }
       } else if (shouldReconnect) {
-        // Clear stale pairing code so a fresh one is requested on reconnect
-        this.instance.qrcode.pairingCode = null;
+        // Keep existing pairingCode on transient reconnects to prevent code
+        // churning. Only a full instance recreation should generate a new code.
         await this.connectToWhatsapp(this.phoneNumber);
       } else {
         this.sendDataWebhook(Events.STATUS_INSTANCE, {
