@@ -436,7 +436,9 @@ export class BaileysStartupService extends ChannelStartupService {
       // Guard against infinite QR code loop: if we never fully connected
       // (no wuid) and there's no status code, don't attempt reconnection
       if (!this.instance.wuid && !statusCode) {
-        this.logger.warn('Connection closed before QR was scanned (no wuid, no statusCode) — skipping reconnect to prevent loop');
+        this.logger.warn(
+          'Connection closed before QR was scanned (no wuid, no statusCode) — skipping reconnect to prevent loop',
+        );
         return;
       }
 
