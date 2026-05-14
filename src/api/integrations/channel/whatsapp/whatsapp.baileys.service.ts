@@ -464,15 +464,19 @@ export class BaileysStartupService extends ChannelStartupService {
             `Too many consecutive 428 disconnects (${this.consecutive428Count}) for "${this.instance.name}" — giving up`,
           );
           this.consecutive428Count = 0;
-          await this.prismaRepository.instance.update({
-            where: { id: this.instanceId },
-            data: {
-              connectionStatus: 'close',
-              disconnectionAt: new Date(),
-              disconnectionReasonCode: statusCode,
-              disconnectionObject: JSON.stringify(lastDisconnect),
-            },
-          });
+          try {
+            await this.prismaRepository.instance.update({
+              where: { id: this.instanceId },
+              data: {
+                connectionStatus: 'close',
+                disconnectionAt: new Date(),
+                disconnectionReasonCode: statusCode,
+                disconnectionObject: JSON.stringify(lastDisconnect),
+              },
+            });
+          } catch (dbErr) {
+            this.logger.warn(`Could not update instance status for "${this.instance.name}": ${dbErr}`);
+          }
           this.sendDataWebhook(Events.CONNECTION_UPDATE, { instance: this.instance.name, ...this.stateConnection });
         } else {
           // 428 = Connection Closed by WhatsApp. Reconnect after a cooldown
@@ -482,15 +486,19 @@ export class BaileysStartupService extends ChannelStartupService {
           this.logger.warn(
             `Connection closed with 428 for "${this.instance.name}" (attempt ${this.consecutive428Count}/${this.MAX_428_RETRIES}) — reconnecting in ${cooldownMs}ms`,
           );
-          await this.prismaRepository.instance.update({
-            where: { id: this.instanceId },
-            data: {
-              connectionStatus: 'connecting',
-              disconnectionAt: new Date(),
-              disconnectionReasonCode: statusCode,
-              disconnectionObject: JSON.stringify(lastDisconnect),
-            },
-          });
+          try {
+            await this.prismaRepository.instance.update({
+              where: { id: this.instanceId },
+              data: {
+                connectionStatus: 'connecting',
+                disconnectionAt: new Date(),
+                disconnectionReasonCode: statusCode,
+                disconnectionObject: JSON.stringify(lastDisconnect),
+              },
+            });
+          } catch (dbErr) {
+            this.logger.warn(`Could not update instance status for "${this.instance.name}": ${dbErr}`);
+          }
           this.sendDataWebhook(Events.CONNECTION_UPDATE, {
             instance: this.instance.name,
             state: 'connecting',
