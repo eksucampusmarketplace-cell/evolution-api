@@ -40,6 +40,11 @@ export class WAMonitoringService {
   public readonly waInstances: Record<string, any> = {};
   private readonly delInstanceTimeouts: Record<string, NodeJS.Timeout> = {};
 
+  // Stagger delay between auto-connecting instances on startup (ms).
+  // Prevents WhatsApp 428 rate limits from multiple simultaneous Baileys
+  // WebSocket connections opening from the same IP.
+  private readonly INSTANCE_STAGGER_DELAY_MS = 10_000; // 10s between each instance
+
   private readonly providerSession: ProviderSession;
 
   public delInstanceTime(instance: string) {
@@ -314,6 +319,8 @@ export class WAMonitoringService {
       ownerJid: instanceData.ownerJid,
     });
 
+    this.waInstances[instanceData.instanceName] = instance;
+
     if (instanceData.connectionStatus === 'open' || instanceData.connectionStatus === 'connecting') {
       this.logger.info(
         `Auto-connecting instance "${instanceData.instanceName}" (status: ${instanceData.connectionStatus})`,
@@ -324,14 +331,23 @@ export class WAMonitoringService {
         `Skipping auto-connect for instance "${instanceData.instanceName}" (status: ${instanceData.connectionStatus || 'close'})`,
       );
     }
-
-    this.waInstances[instanceData.instanceName] = instance;
   }
 
   private async loadInstancesFromRedis() {
     const keys = await this.cache.keys();
 
     if (keys?.length > 0) {
+      // Collect all instances first, then sort and stagger like the DB loader
+      const instanceDatas: Array<{
+        instanceId: string;
+        instanceName: string;
+        integration: string;
+        token: string;
+        number: string;
+        businessId: string;
+        connectionStatus: string;
+      }> = [];
+
       for (const k of keys) {
         const instanceData = await this.prismaRepository.instance.findUnique({
           where: { id: k.split(':')[1] },
@@ -341,17 +357,36 @@ export class WAMonitoringService {
           continue;
         }
 
-        const instance = {
+        instanceDatas.push({
           instanceId: k.split(':')[1],
           instanceName: k.split(':')[2],
           integration: instanceData.integration,
           token: instanceData.token,
           number: instanceData.number,
           businessId: instanceData.businessId,
-          connectionStatus: instanceData.connectionStatus as any,
-        };
+          connectionStatus: instanceData.connectionStatus as string,
+        });
+      }
 
-        await this.setInstance(instance);
+      // Sort: open first, then connecting, then others
+      const statusPriority = (status: string | null): number => {
+        if (status === 'open') return 0;
+        if (status === 'connecting') return 1;
+        return 2;
+      };
+      instanceDatas.sort((a, b) => statusPriority(a.connectionStatus) - statusPriority(b.connectionStatus));
+
+      let connectCount = 0;
+      for (const inst of instanceDatas) {
+        const willConnect = inst.connectionStatus === 'open' || inst.connectionStatus === 'connecting';
+        if (willConnect && connectCount > 0) {
+          this.logger.info(
+            `Stagger delay: waiting ${this.INSTANCE_STAGGER_DELAY_MS / 1000}s before connecting "${inst.instanceName}"`,
+          );
+          await new Promise((r) => setTimeout(r, this.INSTANCE_STAGGER_DELAY_MS));
+        }
+        await this.setInstance(inst as any);
+        if (willConnect) connectCount++;
       }
     }
   }
@@ -367,7 +402,36 @@ export class WAMonitoringService {
       return;
     }
 
-    for (const instance of instances) {
+    // Sort: active/open instances first, then connecting, then others.
+    // This ensures established sessions reconnect before new pairings,
+    // reducing the chance of a 428 cascade from WhatsApp.
+    const statusPriority = (status: string | null): number => {
+      if (status === 'open') return 0;
+      if (status === 'connecting') return 1;
+      return 2; // 'close', null, etc.
+    };
+    const sorted = [...instances].sort(
+      (a, b) => statusPriority(a.connectionStatus) - statusPriority(b.connectionStatus),
+    );
+
+    const needsConnect = sorted.filter((i) => i.connectionStatus === 'open' || i.connectionStatus === 'connecting');
+    this.logger.info(
+      `Loading ${sorted.length} instances (${needsConnect.length} will auto-connect with ${this.INSTANCE_STAGGER_DELAY_MS / 1000}s stagger)`,
+    );
+
+    let connectCount = 0;
+    for (const instance of sorted) {
+      const willConnect = instance.connectionStatus === 'open' || instance.connectionStatus === 'connecting';
+
+      // Stagger: wait between auto-connecting instances to avoid WhatsApp 428.
+      // Only delay between instances that will actually open a WebSocket.
+      if (willConnect && connectCount > 0) {
+        this.logger.info(
+          `Stagger delay: waiting ${this.INSTANCE_STAGGER_DELAY_MS / 1000}s before connecting "${instance.name}" (${connectCount + 1}/${needsConnect.length})`,
+        );
+        await new Promise((r) => setTimeout(r, this.INSTANCE_STAGGER_DELAY_MS));
+      }
+
       await this.setInstance({
         instanceId: instance.id,
         instanceName: instance.name,
@@ -378,6 +442,8 @@ export class WAMonitoringService {
         ownerJid: instance.ownerJid,
         connectionStatus: instance.connectionStatus as any,
       });
+
+      if (willConnect) connectCount++;
     }
   }
 
@@ -388,19 +454,51 @@ export class WAMonitoringService {
       return;
     }
 
+    // Collect all instance data first so we can sort and stagger
+    const instanceDatas: Array<{
+      instanceId: string;
+      instanceName: string;
+      integration: string;
+      token: string;
+      businessId: string;
+      connectionStatus: string;
+    }> = [];
+
     for (const instanceId of instances.data as string[]) {
       const instance = await this.prismaRepository.instance.findUnique({
         where: { id: instanceId },
       });
+      if (!instance) continue;
 
-      await this.setInstance({
+      instanceDatas.push({
         instanceId: instance.id,
         instanceName: instance.name,
         integration: instance.integration,
         token: instance.token,
         businessId: instance.businessId,
-        connectionStatus: instance.connectionStatus as any,
+        connectionStatus: instance.connectionStatus as string,
       });
+    }
+
+    // Sort: open first, then connecting, then others
+    const statusPriority = (status: string | null): number => {
+      if (status === 'open') return 0;
+      if (status === 'connecting') return 1;
+      return 2;
+    };
+    instanceDatas.sort((a, b) => statusPriority(a.connectionStatus) - statusPriority(b.connectionStatus));
+
+    let connectCount = 0;
+    for (const inst of instanceDatas) {
+      const willConnect = inst.connectionStatus === 'open' || inst.connectionStatus === 'connecting';
+      if (willConnect && connectCount > 0) {
+        this.logger.info(
+          `Stagger delay: waiting ${this.INSTANCE_STAGGER_DELAY_MS / 1000}s before connecting "${inst.instanceName}"`,
+        );
+        await new Promise((r) => setTimeout(r, this.INSTANCE_STAGGER_DELAY_MS));
+      }
+      await this.setInstance(inst as any);
+      if (willConnect) connectCount++;
     }
   }
 
