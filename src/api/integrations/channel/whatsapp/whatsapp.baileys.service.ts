@@ -384,8 +384,13 @@ export class BaileysStartupService extends ChannelStartupService {
         // once and reusing across QR rotations, the code stays valid for the full
         // connection attempt (QR_LIMIT * qrTimeout).
         if (!this.instance.qrcode.pairingCode) {
-          await delay(1000);
-          this.instance.qrcode.pairingCode = await this.client.requestPairingCode(this.phoneNumber);
+          try {
+            await delay(1000);
+            this.instance.qrcode.pairingCode = await this.client.requestPairingCode(this.phoneNumber);
+          } catch (error) {
+            this.logger.error('requestPairingCode failed: ' + error.toString());
+            this.instance.qrcode.pairingCode = null;
+          }
         }
       } else {
         this.instance.qrcode.pairingCode = null;
